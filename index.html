@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Whodunnit?</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <div class="app-shell">
+    <!-- Top Header -->
+    <header id="topHeader" class="hidden">
+      <div class="brand" id="brandBtn">
+        <svg class="brand-icon" viewBox="0 0 120 90" fill="none">
+          <circle cx="60" cy="72" r="7" fill="#ffffff"/>
+          <path d="M40 72 A20 20 0 0 1 80 72" stroke="#d4d4d8" stroke-width="8" stroke-linecap="round"/>
+          <path d="M24 72 A36 36 0 0 1 96 72" stroke="#8e8e93" stroke-width="8" stroke-linecap="round"/>
+          <path d="M8 72 A52 52 0 0 1 112 72" stroke="#52525b" stroke-width="8" stroke-linecap="round"/>
+        </svg>
+        <svg class="brand-wordmark" viewBox="0 0 420 65">
+          <text x="0" y="52" font-family="'Arial Narrow', 'Impact', sans-serif" font-weight="900" font-size="56" letter-spacing="-1" fill="#000000">WHODUNNIT</text>
+          <text x="382" y="52" font-family="'Arial Narrow', sans-serif" font-weight="700" font-size="56" fill="#777777">?</text>
+        </svg>
+      </div>
+
+      <!-- Editable in Lobby; Locked in Queue, Room, and Active Match -->
+      <div class="active-agent-badge" id="headerBadge" title="Edit Nickname">
+        <span id="headerAlias">PLAYER</span>
+        <span class="edit-icon">✎</span>
+      </div>
+    </header>
+
+    <div class="step-viewport">
+
+      <!-- PAGE 1: IDENTITY ENTRY -->
+      <section id="step-name" class="step active">
+        <div class="center-stage">
+          <div class="hero-block">
+            <svg class="hero-icon" viewBox="0 0 120 90" fill="none">
+              <circle cx="60" cy="72" r="7" fill="#ffffff"/>
+              <path d="M40 72 A20 20 0 0 1 80 72" stroke="#d4d4d8" stroke-width="8" stroke-linecap="round"/>
+              <path d="M24 72 A36 36 0 0 1 96 72" stroke="#8e8e93" stroke-width="8" stroke-linecap="round"/>
+              <path d="M8 72 A52 52 0 0 1 112 72" stroke="#52525b" stroke-width="8" stroke-linecap="round"/>
+            </svg>
+            <svg class="hero-wordmark" viewBox="0 0 420 65">
+              <text x="0" y="52" font-family="'Arial Narrow', 'Impact', sans-serif" font-weight="900" font-size="56" letter-spacing="-1" fill="#000000">WHODUNNIT</text>
+              <text x="382" y="52" font-family="'Arial Narrow', sans-serif" font-weight="700" font-size="56" fill="#777777">?</text>
+            </svg>
+            <p class="hero-pitch">
+              A 1v1 guessing game. Read the clues, hit the buzzer first, and name the movie, series, or anime.
+            </p>
+          </div>
+
+          <input
+            type="text"
+            id="aliasInput"
+            class="name-input"
+            maxlength="16"
+            placeholder="Enter your nickname"
+            autocomplete="off"
+          />
+
+          <button class="btn-main" id="enterNameBtn">ENTER</button>
+
+          <div class="how-strip">
+            <div class="how-step"><span class="how-num">1</span> 4 Clues</div>
+            <span class="dim-arrow">→</span>
+            <div class="how-step"><span class="how-num">2</span> Buzz First</div>
+            <span class="dim-arrow">→</span>
+            <div class="how-step"><span class="how-num">3</span> Guess Title</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- PAGE 2: MODE SELECT -->
+      <section id="step-mode" class="step">
+        <div class="center-stage">
+          <div class="mode-prompt">
+            <h2>Choose Game Mode</h2>
+            <p>Play against a random opponent or invite a friend.</p>
+          </div>
+
+          <div class="choice-card primary-card" id="modeOnlineBtn">
+            <div>
+              <div class="choice-title">PLAY ONLINE</div>
+              <div class="choice-desc">Quick match against an online player</div>
+            </div>
+            <span class="choice-arrow">→</span>
+          </div>
+
+          <div class="choice-card" id="modeFriendBtn">
+            <div>
+              <div class="choice-title">PLAY WITH FRIEND</div>
+              <div class="choice-desc">Host a room or join with a 4-letter code</div>
+            </div>
+            <span class="choice-arrow">→</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- PAGE 3A: FRIEND SUB-MENU -->
+      <section id="step-friend-menu" class="step">
+        <div class="step-nav">
+          <button class="back-btn" id="backToModeBtn">← Back</button>
+          <span class="step-indicator">Private Room</span>
+        </div>
+
+        <div class="center-stage">
+          <div class="choice-card primary-card" id="createRoomMenuBtn">
+            <div>
+              <div class="choice-title">CREATE ROOM</div>
+              <div class="choice-desc">Choose category & get an invite code</div>
+            </div>
+            <span class="choice-arrow">→</span>
+          </div>
+
+          <div class="choice-card" id="joinRoomMenuBtn">
+            <div>
+              <div class="choice-title">JOIN ROOM</div>
+              <div class="choice-desc">Enter a friend's 4-letter room code</div>
+            </div>
+            <span class="choice-arrow">→</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- PAGE 3B: JOIN CODE -->
+      <section id="step-join-code" class="step">
+        <div class="step-nav">
+          <button class="back-btn" id="backToFriendMenuBtn">← Back</button>
+          <span class="step-indicator">Join Room</span>
+        </div>
+
+        <div class="center-stage">
+          <h2 class="page-heading center-text">Enter Room Code</h2>
+          <input type="text" id="joinCodeInput" class="pin-input" maxlength="4" placeholder="XK9P" autocomplete="off" />
+          <p id="joinErrorMsg" class="error-text"></p>
+          <button class="btn-main" id="submitJoinBtn">JOIN</button>
+        </div>
+      </section>
+
+      <!-- PAGE 4: FORMAT SELECTOR -->
+      <section id="step-format" class="step">
+        <div class="step-nav">
+          <button class="back-btn" id="backFromFormatBtn">← Back</button>
+        </div>
+
+        <h2 class="page-heading">Choose Format</h2>
+
+        <div class="grid-2x2">
+          <div class="tile-btn" data-format="all">
+            <div class="tile-name">All Mix</div>
+            <div class="tile-sub">Movies, Shows & Anime</div>
+          </div>
+          <div class="tile-btn" data-format="movie">
+            <div class="tile-name">Movies</div>
+            <div class="tile-sub">Films only</div>
+          </div>
+          <div class="tile-btn" data-format="tv">
+            <div class="tile-name">Shows</div>
+            <div class="tile-sub">Series & TV</div>
+          </div>
+          <div class="tile-btn" data-format="anime">
+            <div class="tile-name">Anime</div>
+            <div class="tile-sub">Japanese animation</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- PAGE 5: INDUSTRY / LANGUAGE SELECTOR -->
+      <section id="step-language" class="step">
+        <div class="step-nav">
+          <button class="back-btn" id="backToFormatBtn">← Back</button>
+        </div>
+
+        <h2 class="page-heading" id="selectedFormatLabel">Choose Language</h2>
+
+        <div class="lang-grid" id="langGrid">
+          <div class="lang-btn span-2 selected" data-lang="random">Random Mix (All Shuffled)</div>
+          <div class="lang-btn" data-lang="en">English</div>
+          <div class="lang-btn" data-lang="ml">Malayalam</div>
+          <div class="lang-btn" data-lang="ta">Tamil</div>
+          <div class="lang-btn" data-lang="te">Telugu</div>
+          <div class="lang-btn" data-lang="hi">Hindi</div>
+          <div class="lang-btn" data-lang="ja">Japanese</div>
+          <div class="lang-btn" data-lang="ko">Korean</div>
+        </div>
+
+        <div id="hostOptionsBox" class="host-options hidden">
+          <div class="option-row">
+            <span class="step-indicator">Rounds</span>
+            <div class="rounds-strip" id="roundsStrip">
+              <div class="mini-pill" data-rounds="5">5</div>
+              <div class="mini-pill selected" data-rounds="10">10</div>
+              <div class="mini-pill" data-rounds="15">15</div>
+              <div class="mini-pill" data-rounds="20">20</div>
+            </div>
+          </div>
+          <div class="option-row" style="margin-top: 10px;">
+            <span class="step-indicator">Scoring</span>
+            <div class="rounds-strip" id="scoringStrip">
+              <div class="mini-pill selected" data-scoring="escalating">Escalating (+20..+5)</div>
+              <div class="mini-pill" data-scoring="flat">Classic (±10)</div>
+            </div>
+          </div>
+        </div>
+
+        <button class="btn-main" id="proceedMatchBtn">FIND OPPONENT</button>
+      </section>
+
+      <!-- PAGE 6: WAITING ROOM -->
+      <section id="step-waiting" class="step">
+        <div class="step-nav">
+          <button class="back-btn" id="cancelWaitBtn">← Cancel</button>
+          <span class="step-indicator" id="waitingTag">Searching</span>
+        </div>
+
+        <div id="radarView" class="radar-center">
+          <svg width="90" height="68" viewBox="0 0 120 90" fill="none">
+            <circle class="radar-arc" cx="60" cy="72" r="7" fill="#ffffff"/>
+            <path class="radar-arc" d="M40 72 A20 20 0 0 1 80 72" stroke="#d4d4d8" stroke-width="8" stroke-linecap="round"/>
+            <path class="radar-arc" d="M24 72 A36 36 0 0 1 96 72" stroke="#8e8e93" stroke-width="8" stroke-linecap="round"/>
+            <path class="radar-arc" d="M8 72 A52 52 0 0 1 112 72" stroke="#52525b" stroke-width="8" stroke-linecap="round"/>
+          </svg>
+          <div>
+            <h2 style="font-size: 20px;">Finding Opponent...</h2>
+            <p class="sub-muted" id="queueSummary">All Mix • Random Mix</p>
+          </div>
+        </div>
+
+        <div id="hostShareView" class="center-stage hidden">
+          <div class="big-code-box">
+            <span class="step-indicator">Room Code</span>
+            <div class="case-code-text" id="displayRoomCode">----</div>
+            <p class="sub-muted">Share this code or invite link with your friend.</p>
+          </div>
+          <button class="btn-main" id="copyInviteBtn">COPY INVITE LINK</button>
+        </div>
+      </section>
+
+      <!-- PAGE 7: ACTIVE GAMEPLAY -->
+      <section id="step-game" class="step">
+        <div class="game-hud">
+          <div>
+            <div class="hud-name" id="hudMyName">YOU</div>
+            <div class="hud-score" id="hudMyScore">0</div>
+          </div>
+          <div class="hud-center">
+            <div class="step-indicator" id="hudRoundLabel">ROUND 01 / 10</div>
+            <div class="hud-timer" id="hudClueTimer">NEXT CLUE: 8s</div>
+          </div>
+          <div class="hud-right">
+            <div class="hud-name" id="hudOppName">OPPONENT</div>
+            <div class="hud-score muted-score" id="hudOppScore">0</div>
+          </div>
+        </div>
+
+        <!-- Round Result Banner -->
+        <div id="roundBanner" class="round-banner hidden">
+          <div class="step-indicator" id="bannerTag">ROUND OVER</div>
+          <h2 id="bannerTitle" class="banner-movie-title">Movie Title</h2>
+          <p id="bannerSub" class="sub-muted">+20 PTS</p>
+        </div>
+
+        <!-- 4 Clues Stack -->
+        <div class="clue-stack" id="clueStack"></div>
+
+        <!-- Bottom Action Dock -->
+        <div class="thumb-dock">
+          <!-- State 1: Open Floor -->
+          <div id="dock-open" class="dock-view active">
+            <button class="btn-buzz-huge" id="buzzInBtn">BUZZ IN</button>
+          </div>
+
+          <!-- State 2: You Buzzed In (or Sudden Death) -->
+          <div id="dock-typing" class="dock-view">
+            <div class="typing-header">
+              <span id="typingPromptLabel">TYPE TITLE</span>
+              <span id="buzzCountdown" class="timer-bright">14.0s</span>
+            </div>
+            <div class="word-boxes" id="wordBoxes"></div>
+            <div class="type-row">
+              <input type="text" id="answerInput" class="type-input" placeholder="Your guess..." autocomplete="off" />
+              <button class="btn-main go-btn" id="submitGuessBtn">GO</button>
+            </div>
+          </div>
+
+          <!-- State 3: Opponent Buzzed In -->
+          <div id="dock-locked" class="dock-view">
+            <div class="lockout-row">
+              <div>
+                <div class="lockout-title" id="lockedByLabel">OPPONENT BUZZED IN!</div>
+                <div class="lockout-sub" id="oppCountdownLabel">Waiting for their guess...</div>
+              </div>
+              <button class="btn-main sabotage-btn" id="sabotageBtn">⚡ SABOTAGE</button>
+            </div>
+          </div>
+
+          <!-- State 4: You Already Missed This Round -->
+          <div id="dock-exhausted" class="dock-view">
+            <div class="exhausted-msg">You already guessed this round. Waiting for opponent...</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- PAGE 8: SUMMARY -->
+      <section id="step-summary" class="step">
+        <div class="summary-top">
+          <span class="step-indicator" id="summaryWinnerTag">MATCH COMPLETE</span>
+          <h1 class="final-score-text" id="summaryScoreText">0 – 0</h1>
+        </div>
+
+        <div class="clue-stack" id="summaryHistoryList"></div>
+
+        <div>
+          <button class="btn-main" id="rematchBtn">REMATCH</button>
+          <button class="btn-ghost" id="summaryHomeBtn" style="margin-top: 8px;">HOME</button>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+  <!-- Firebase SDKs & App Modules -->
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
