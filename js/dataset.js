@@ -1,5 +1,8 @@
 import { TMDB_API_KEY, TMDB_BASE_URL, JIKAN_BASE_URL } from "./config.js";
 
+const SEEN_STORAGE_KEY = "whodunnit_seen_titles_v1";
+const MAX_SEEN_HISTORY = 400;
+
 export const CURATED_DECK = [
   // ================= MALAYALAM =================
   {
@@ -54,6 +57,19 @@ export const CURATED_DECK = [
       "A 2013 Malayalam crime thriller whose airtight alibi spawned remakes across India and China."
     ]
   },
+  {
+    titles: ["Aavesham"],
+    displayTitle: "Aavesham",
+    format: "movie",
+    lang: "ml",
+    year: 2024,
+    clues: [
+      "Three bullied engineering freshers in Bengaluru befriend an eccentric, white-clad local gangster who loves reels and warm embraces.",
+      "Directed by Jithu Madhavan starring Fahadh Faasil, with an electrifying soundtrack by Sushin Shyam.",
+      "\"Eda Mone!\" — A volatile don throws a lavish birthday bash where loyalty is tested with a machete.",
+      "A 2024 Malayalam action-comedy blockbuster about hostelers getting way over their heads."
+    ]
+  },
 
   // ================= TAMIL =================
   {
@@ -93,6 +109,19 @@ export const CURATED_DECK = [
       "Directed by Lokesh Kanagaraj starring Karthi, with zero songs and relentless nighttime tension.",
       "A Gatling gun mounted on the back of a truck turns a police station siege into pure chaos.",
       "A 2019 Tamil action thriller set entirely over a single night."
+    ]
+  },
+  {
+    titles: ["Super Deluxe"],
+    displayTitle: "Super Deluxe",
+    format: "movie",
+    lang: "ta",
+    year: 2019,
+    clues: [
+      "Four wildly different stories collide over one bizarre day in Chennai involving a dead body, a missing TV, and a returning father.",
+      "Directed by Thiagarajan Kumararaja starring Vijay Sethupathi, Fahadh Faasil, Samantha, and Ramya Krishnan.",
+      "A teenager discovers his mother used to star in B-grade films—the exact same afternoon his friends break their TV.",
+      "A 2019 Tamil hyper-link anthology drama praised for its dark humor and philosophy."
     ]
   },
 
@@ -175,6 +204,19 @@ export const CURATED_DECK = [
       "Starring Saif Ali Khan and Nawazuddin Siddiqui, co-directed by Anurag Kashyap and Vikramaditya Motwane.",
       "\"Kabhi kabhi lagta hai apun hi bhagwan hai.\" — A gangster narrates his rise from behind bulletproof glass.",
       "Netflix's first Indian original crime thriller series, based on Vikram Chandra's novel."
+    ]
+  },
+  {
+    titles: ["3 Idiots", "Three Idiots"],
+    displayTitle: "3 Idiots",
+    format: "movie",
+    lang: "hi",
+    year: 2009,
+    clues: [
+      "Two friends embark on a road trip across India to find their vanished college roommate who taught them to chase excellence, not grades.",
+      "Directed by Rajkumar Hirani starring Aamir Khan, R. Madhavan, Sharman Joshi, and Boman Irani.",
+      "\"All Izz Well\" — A strict engineering dean keeps an astronaut's space pen as a trophy for the best student.",
+      "A 2009 Hindi coming-of-age comedy-drama set at the Imperial College of Engineering."
     ]
   },
 
@@ -328,6 +370,32 @@ export const CURATED_DECK = [
   }
 ];
 
+// ================= SEEN-TITLE MEMORY (LOCALSTORAGE) =================
+function getSeenTitles() {
+  try {
+    const raw = localStorage.getItem(SEEN_STORAGE_KEY);
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveSeenTitles(newTitles) {
+  try {
+    const seen = Array.from(getSeenTitles());
+    for (const t of newTitles) {
+      const key = String(t).toLowerCase().trim();
+      if (key && !seen.includes(key)) {
+        seen.push(key);
+      }
+    }
+    const trimmed = seen.slice(-MAX_SEEN_HISTORY);
+    localStorage.setItem(SEEN_STORAGE_KEY, JSON.stringify(trimmed));
+  } catch {
+    // Ignore storage quota errors on private browsing
+  }
+}
+
 function shuffleArray(arr) {
   const copy = [...arr];
   for (let i = copy.length - 1; i > 0; i--) {
@@ -337,104 +405,185 @@ function shuffleArray(arr) {
   return copy;
 }
 
-// Fetch extra live titles from TMDB (via unblocked api.tmdb.org) or Jikan to keep decks fresh
-async function fetchLiveAdditions(format, lang, neededCount) {
+// Mask accidental title mentions inside API synopses so answers aren't given away
+function sanitizeClueText(text, titles) {
+  let clean = text;
+  for (const title of titles) {
+    if (!title || title.length < 4) continue;
+    const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    clean = clean.replace(new RegExp(escaped, "gi"), "the title work");
+  }
+  return clean;
+}
+
+// Fetch cast & director/creator credits for a TMDB item to build human-style clues
+async function fetchTmdbCreditsClue(mediaType, id, langName, year) {
+  try {
+    const res = await fetch(`${TMDB_BASE_URL}/${mediaType}/${id}/credits?api_key=${TMDB_API_KEY}`);
+    const data = await res.json();
+    const cast = (data.cast || []).slice(0, 3).map(c => c.name);
+    const directors = (data.crew || [])
+      .filter(c => c.job === "Director" || c.job === "Executive Producer")
+      .slice(0, 2)
+      .map(c => c.name);
+
+    if (directors.length > 0 && cast.length >= 2) {
+      return `Directed by ${directors[0]} and featuring performances from ${cast.join(", ")}.`;
+    }
+    if (cast.length >= 2) {
+      return `Stars ${cast.join(", ")} in this acclaimed ${year} ${langName} release.`;
+    }
+  } catch {
+    // Fallback below if credits call times out
+  }
+  return `A standout ${langName} ${mediaType === "tv" ? "series" : "feature"} that premiered in ${year}.`;
+}
+
+// Live API Fetcher (Pages 1–20 across TMDB & Jikan for 500+ titles per category)
+async function fetchLiveAdditions(format, lang, neededCount, seenSet) {
   const results = [];
   if (neededCount <= 0) return results;
 
+  const langMap = {
+    en: "English",
+    ml: "Malayalam",
+    ta: "Tamil",
+    te: "Telugu",
+    hi: "Hindi",
+    ko: "Korean",
+    ja: "Japanese"
+  };
+
   try {
-    if (format === "anime" || lang === "ja") {
-      const page = Math.floor(Math.random() * 4) + 1;
-      const res = await fetch(`${JIKAN_BASE_URL}/top/anime?page=${page}&limit=10`);
+    // Determine whether to pull Anime (Jikan) or Movies/TV (TMDB)
+    const shouldFetchAnime = format === "anime" || (format === "all" && lang === "ja");
+
+    if (shouldFetchAnime) {
+      const page = Math.floor(Math.random() * 18) + 1;
+      const res = await fetch(`${JIKAN_BASE_URL}/top/anime?page=${page}&limit=15`);
       const json = await res.json();
-      for (const item of json.data || []) {
+
+      for (const item of shuffleArray(json.data || [])) {
+        if (results.length >= neededCount) break;
+        const primaryTitle = item.title_english || item.title;
+        if (!primaryTitle || seenSet.has(primaryTitle.toLowerCase())) continue;
         if (!item.synopsis || item.synopsis.length < 60) continue;
-        const cleanSynopsis = item.synopsis.replace(/\[Written by MAL Rewrite\]/gi, "").trim();
-        const sentences = cleanSynopsis.split(". ").filter(s => s.length > 20);
-        const titles = [item.title_english, item.title].filter(Boolean);
-        const studio = item.studios?.[0]?.name || "a renowned Japanese studio";
+
+        const titles = [...new Set([item.title_english, item.title].filter(Boolean))];
+        const cleanSynopsis = sanitizeClueText(
+          item.synopsis.replace(/\[Written by MAL Rewrite\]/gi, "").trim(),
+          titles
+        );
+        const sentences = cleanSynopsis.split(". ").filter(s => s.length > 25);
+        const studio = item.studios?.[0]?.name || "a major Japanese animation studio";
         const year = item.year || item.aired?.prop?.from?.year || "the 2010s";
         const genres = (item.genres || []).map(g => g.name).slice(0, 3).join(", ") || "anime";
 
         results.push({
-          titles: [...new Set(titles)],
-          displayTitle: item.title_english || item.title,
+          titles,
+          displayTitle: primaryTitle,
           format: "anime",
           lang: "ja",
           year,
           clues: shuffleArray([
-            sentences[0] ? `${sentences[0]}.` : `A critically acclaimed ${genres} anime series.`,
-            `Animated by ${studio} and first released in ${year}.`,
-            sentences[1] ? `${sentences[1]}.` : `Features ${item.episodes || "multiple"} episodes blending ${genres.toLowerCase()}.`,
-            `Known under its Japanese title "${item.title}" with a fan rating of ${item.score || "8+"}/10.`
+            sentences[0] ? `${sentences[0]}.` : `A celebrated ${genres.toLowerCase()} anime series.`,
+            `Animated by ${studio} and first broadcast in ${year}.`,
+            sentences[1] ? `${sentences[1]}.` : `Blends ${genres.toLowerCase()} across ${item.episodes || "multiple"} episodes.`,
+            `Known in Japan as "${item.title}" and holds a ${item.score || "8+"}/10 rating among anime fans.`
           ])
         });
       }
     } else if (TMDB_API_KEY && TMDB_API_KEY !== "YOUR_TMDB_API_KEY") {
-      const mediaType = format === "tv" ? "tv" : "movie";
-      const langParam = lang === "random" ? "en|ml|ta|te|hi|ko" : lang;
-      const page = Math.floor(Math.random() * 3) + 1;
-      const url = `${TMDB_BASE_URL}/discover/${mediaType}?api_key=${TMDB_API_KEY}&with_original_language=${langParam}&sort_by=vote_count.desc&page=${page}`;
+      // Pick media type ('movie' or 'tv')
+      const mediaType = format === "tv" ? "tv" : format === "movie" ? "movie" : (Math.random() < 0.75 ? "movie" : "tv");
+
+      // Pick a specific language if 'random' so regional Indian & Korean cinema get equal weight
+      const allLangs = ["en", "ml", "ta", "te", "hi", "ko"];
+      const targetLang = lang === "random"
+        ? allLangs[Math.floor(Math.random() * allLangs.length)]
+        : lang;
+
+      // Regional industries have ~8 deep pages of well-known hits; English has 20+
+      const maxPage = targetLang === "en" ? 20 : 8;
+      const page = Math.floor(Math.random() * maxPage) + 1;
+
+      const url = `${TMDB_BASE_URL}/discover/${mediaType}?api_key=${TMDB_API_KEY}&with_original_language=${targetLang}&sort_by=vote_count.desc&page=${page}`;
       const res = await fetch(url);
       const json = await res.json();
 
-      for (const item of (json.results || []).slice(0, 8)) {
+      const candidates = shuffleArray(json.results || []).filter(item => {
         const title = item.title || item.name;
-        const origTitle = item.original_title || item.original_name;
-        if (!title || !item.overview || item.overview.length < 40) continue;
+        return title && !seenSet.has(title.toLowerCase()) && item.overview && item.overview.length >= 45;
+      }).slice(0, neededCount);
 
-        const year = (item.release_date || item.first_air_date || "").slice(0, 4) || "recent years";
-        const sentences = item.overview.split(". ").filter(s => s.length > 15);
-        const langMap = { en: "English", ml: "Malayalam", ta: "Tamil", te: "Telugu", hi: "Hindi", ko: "Korean", ja: "Japanese" };
-        const langName = langMap[item.original_language] || "international";
+      // Enrich selected candidates with real cast & director credits in parallel
+      const enriched = await Promise.all(
+        candidates.map(async item => {
+          const title = item.title || item.name;
+          const origTitle = item.original_title || item.original_name;
+          const titles = [...new Set([title, origTitle].filter(Boolean))];
+          const year = (item.release_date || item.first_air_date || "").slice(0, 4) || "recent years";
+          const langName = langMap[item.original_language] || "international";
 
-        results.push({
-          titles: [...new Set([title, origTitle].filter(Boolean))],
-          displayTitle: title,
-          format: mediaType,
-          lang: item.original_language,
-          year,
-          clues: shuffleArray([
-            sentences[0] ? `${sentences[0]}.` : item.overview,
-            `A popular ${langName} ${mediaType === "tv" ? "series" : "film"} released in ${year}.`,
-            sentences[1] ? `${sentences[1]}.` : `Rated ${item.vote_average?.toFixed(1) || "8.0"}/10 by global audiences.`,
-            `Starts with the letter "${title[0].toUpperCase()}" and contains ${title.replace(/[^a-zA-Z0-9]/g, "").length} letters.`
-          ])
-        });
-      }
+          const cleanOverview = sanitizeClueText(item.overview, titles);
+          const sentences = cleanOverview.split(". ").filter(s => s.length > 20);
+          const creditsClue = await fetchTmdbCreditsClue(mediaType, item.id, langName, year);
+
+          return {
+            titles,
+            displayTitle: title,
+            format: mediaType,
+            lang: item.original_language,
+            year,
+            clues: shuffleArray([
+              sentences[0] ? `${sentences[0]}.` : cleanOverview,
+              creditsClue,
+              sentences[1] ? `${sentences[1]}.` : `A ${year} ${langName} ${mediaType === "tv" ? "show" : "film"} with strong audience acclaim.`,
+              `The English title has ${title.replace(/[^a-zA-Z0-9]/g, "").length} letters and starts with "${title[0].toUpperCase()}".`
+            ])
+          };
+        })
+      );
+
+      results.push(...enriched);
     }
   } catch (err) {
-    console.warn("Live API fallback skipped, using curated deck:", err);
+    console.warn("Live API fetch fallback triggered:", err);
   }
 
-  return shuffleArray(results).slice(0, neededCount);
+  return results;
 }
 
 export async function buildMatchDeck(format = "all", lang = "random", totalRounds = 10) {
-  // 1. Filter curated deck by format
-  let pool = CURATED_DECK.filter(item => {
-    if (format === "all") return true;
-    return item.format === format;
+  const seenSet = getSeenTitles();
+  const targetCount = totalRounds + 1; // +1 reserved for Sudden Death tie-breaker
+
+  // 1. Filter curated deck by format & language
+  let curatedPool = CURATED_DECK.filter(item => {
+    if (format !== "all" && item.format !== format) return false;
+    if (lang !== "random" && item.lang !== lang && !(lang === "en" && item.lang === "de")) return false;
+    return true;
   });
 
-  // 2. Filter or Round-Robin Balance by language
-  if (lang !== "random") {
-    pool = pool.filter(item => item.lang === lang || (lang === "en" && item.lang === "de"));
-  } else {
-    // Round-robin pick across all language buckets so no single industry dominates
+  // Prefer unseen curated titles first; recycle if player has already seen all curated titles in this filter
+  const unseenCurated = curatedPool.filter(item => !seenSet.has(item.displayTitle.toLowerCase()));
+  if (unseenCurated.length > 0) {
+    curatedPool = unseenCurated;
+  }
+
+  // Round-robin balance curated pool across languages if Random Mix is chosen
+  if (lang === "random") {
     const buckets = {};
-    for (const item of pool) {
+    for (const item of curatedPool) {
       if (!buckets[item.lang]) buckets[item.lang] = [];
       buckets[item.lang].push(item);
     }
-    Object.keys(buckets).forEach(k => {
-      buckets[k] = shuffleArray(buckets[k]);
-    });
+    Object.keys(buckets).forEach(k => (buckets[k] = shuffleArray(buckets[k])));
 
     const balanced = [];
     const keys = shuffleArray(Object.keys(buckets));
     let added = true;
-    while (added && balanced.length < totalRounds + 2) {
+    while (added && balanced.length < targetCount) {
       added = false;
       for (const k of keys) {
         if (buckets[k].length > 0) {
@@ -443,30 +592,43 @@ export async function buildMatchDeck(format = "all", lang = "random", totalRound
         }
       }
     }
-    pool = balanced;
+    curatedPool = balanced;
+  } else {
+    curatedPool = shuffleArray(curatedPool);
   }
 
-  // Shuffle clues inside each item so every match feels fresh
-  let finalDeck = shuffleArray(pool).map(item => ({
+  // 2. Blend 50% Curated + 50% Live API titles so every single match has brand-new questions
+  const curatedQuota = Math.min(curatedPool.length, Math.ceil(targetCount / 2));
+  const selectedCurated = curatedPool.slice(0, curatedQuota).map(item => ({
     ...item,
     clues: shuffleArray(item.clues)
   }));
 
-  // Top up with live API items if we need more rounds (plus 1 sudden-death tie-breaker card)
-  const targetCount = totalRounds + 1;
-  if (finalDeck.length < targetCount) {
-    const liveExtras = await fetchLiveAdditions(format, lang, targetCount - finalDeck.length);
-    finalDeck = [...finalDeck, ...liveExtras];
+  const liveNeeded = targetCount - selectedCurated.length;
+  let liveItems = await fetchLiveAdditions(format, lang, liveNeeded, seenSet);
+
+  // If live API returned fewer than needed (e.g., offline), top up with remaining curated items
+  if (selectedCurated.length + liveItems.length < targetCount) {
+    const remainingCurated = curatedPool
+      .slice(curatedQuota)
+      .map(item => ({ ...item, clues: shuffleArray(item.clues) }));
+    liveItems = [...liveItems, ...remainingCurated];
   }
 
-  // Fallback safety if a super narrow filter had fewer items
-  if (finalDeck.length < targetCount) {
-    const fallback = shuffleArray(CURATED_DECK).map(item => ({
+  // Final safety fallback across entire deck if narrow filter still came up short
+  let combined = shuffleArray([...selectedCurated, ...liveItems]);
+  if (combined.length < targetCount) {
+    const emergencyPool = shuffleArray(CURATED_DECK).map(item => ({
       ...item,
       clues: shuffleArray(item.clues)
     }));
-    finalDeck = [...finalDeck, ...fallback].slice(0, targetCount);
+    combined = [...combined, ...emergencyPool];
   }
 
-  return finalDeck.slice(0, targetCount);
+  const finalDeck = combined.slice(0, targetCount);
+
+  // Record chosen titles in localStorage so future matches skip them
+  saveSeenTitles(finalDeck.map(card => card.displayTitle));
+
+  return finalDeck;
 }
