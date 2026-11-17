@@ -446,7 +446,6 @@ header {
   border: 1px solid var(--border-active);
   border-radius: 12px;
   padding: 14px 16px;
-  animation: fadeSlide 0.22s ease;
 }
 
 @keyframes fadeSlide {
