@@ -27,25 +27,27 @@ const db = getDatabase(app);
 const state = {
   uid: null,
   nickname: "",
-  flow: "online",       // 'online' | 'host' | 'join'
-  format: "all",        // 'all' | 'movie' | 'tv' | 'anime'
-  lang: "random",       // 'random' | 'en' | 'ml' | 'ta' | 'te' | 'hi' | 'ja' | 'ko'
+  flow: "online",
+  format: "all",
+  lang: "random",
   rounds: 10,
   scoring: "escalating",
   sessionLocked: false,
 
   // Active Room State
   roomCode: null,
-  role: null,           // 'p1' | 'p2'
+  role: null,
   roomRef: null,
   roomData: null,
   queueRef: null,
   pendingInviteRoom: null,
 
-  // Local Timers & Flags
+  // Local Timers & Render Cache
   uiTickInterval: null,
   lastSabotageSeen: 0,
-  lastBuzzRound: -1
+  lastBuzzRound: -1,
+  lastClueRenderKey: "",
+  advancingRoundIndex: -1
 };
 
 // Check if opened via ?room=XXXX invite link
@@ -79,7 +81,6 @@ function goStep(stepId) {
     header.classList.remove("hidden");
   }
 
-  // Lock username editing once in Queue, Host Room, or Active Gameplay
   state.sessionLocked = (stepId === "step-waiting" || stepId === "step-game");
   if (state.sessionLocked) {
     badge.classList.add("locked");
@@ -102,7 +103,6 @@ function confirmNickname() {
   document.getElementById("headerAlias").textContent = name;
   document.getElementById("hudMyName").textContent = name;
 
-  // If user arrived via ?room=CODE invite link, jump straight to join
   if (state.pendingInviteRoom) {
     const code = state.pendingInviteRoom;
     state.pendingInviteRoom = null;
@@ -137,7 +137,6 @@ async function startOnlineQueue() {
   const myQueueRef = ref(db, `queue/${bucketKey}/${state.uid}`);
   state.queueRef = myQueueRef;
 
-  // Check if another player is already waiting in this bucket
   const snap = await get(bucketRef);
   let matchedOpponent = null;
 
@@ -152,11 +151,9 @@ async function startOnlineQueue() {
   }
 
   if (matchedOpponent) {
-    // Join the waiting player's room and remove their queue entry
     await remove(ref(db, `queue/${bucketKey}/${matchedOpponent.uid}`));
     await joinPrivateRoom(matchedOpponent.roomCode);
   } else {
-    // Create a room and advertise it in the public queue
     const code = generateRoomCode();
     await createRoomInFirebase(code, true);
     await set(myQueueRef, {
@@ -205,6 +202,7 @@ async function createRoomInFirebase(code, isPublic) {
     deck,
     roundIndex: 0,
     roundStartTime: 0,
+    roundAdvanceAt: 0,
     buzzedBy: null,
     buzzDeadline: 0,
     p1Exhausted: false,
@@ -253,7 +251,8 @@ async function joinPrivateRoom(rawCode) {
     },
     status: "playing",
     roundIndex: 0,
-    roundStartTime: Date.now()
+    roundStartTime: Date.now(),
+    roundAdvanceAt: 0
   });
 
   attachRoomListener(code, "p2");
@@ -277,6 +276,8 @@ function attachRoomListener(code, role) {
   if (state.roomRef) off(state.roomRef);
   state.roomCode = code;
   state.role = role;
+  state.lastClueRenderKey = "";
+  state.advancingRoundIndex = -1;
   state.roomRef = ref(db, `rooms/${code}`);
 
   onValue(state.roomRef, snapshot => {
@@ -335,7 +336,7 @@ function renderGameState(room) {
     document.getElementById("hudRoundLabel").textContent = `ROUND ${String(room.roundIndex + 1).padStart(2, "0")} / ${totalRounds}`;
   }
 
-  // Trigger sabotage visual shake if opponent triggered it within last 2.5s
+  // Trigger sabotage visual shake if opponent triggered it
   if (room.sabotageAt && room.sabotageAt !== state.lastSabotageSeen && room.buzzedBy === state.uid) {
     state.lastSabotageSeen = room.sabotageAt;
     const stack = document.getElementById("clueStack");
@@ -356,29 +357,35 @@ function renderGameState(room) {
     banner.classList.add("hidden");
   }
 
-  // Render Clues (Newest on top)
-  const currentCard = room.deck[room.roundIndex];
+  // Render Clues ONLY when round or revealed clue count changes (prevents flicker!)
+  const deckArr = Array.isArray(room.deck) ? room.deck : Object.values(room.deck || {});
+  const currentCard = deckArr[room.roundIndex];
   if (!currentCard) return;
 
   const revealedCount = getRevealedClueCount(room);
-  const stackEl = document.getElementById("clueStack");
-  stackEl.innerHTML = "";
+  const clueRenderKey = `${room.roundIndex}_${revealedCount}_${room.isSuddenDeath ? 1 : 0}_${room.roundResult ? 1 : 0}`;
 
-  const maxSlots = room.isSuddenDeath ? 1 : 4;
-  for (let i = maxSlots - 1; i >= 0; i--) {
-    const div = document.createElement("div");
-    if (i < revealedCount) {
-      const pts = getCurrentRoundPoints(room, i + 1);
-      div.className = "clue-item";
-      div.innerHTML = `
-        <div class="clue-tag"><span>CLUE 0${i + 1}</span><span>+${pts} PTS</span></div>
-        <div class="clue-body">${currentCard.clues[i]}</div>
-      `;
-    } else {
-      div.className = "clue-item locked";
-      div.textContent = `[ CLUE 0${i + 1} ]`;
+  if (clueRenderKey !== state.lastClueRenderKey) {
+    state.lastClueRenderKey = clueRenderKey;
+    const stackEl = document.getElementById("clueStack");
+    stackEl.innerHTML = "";
+
+    const maxSlots = room.isSuddenDeath ? 1 : 4;
+    for (let i = maxSlots - 1; i >= 0; i--) {
+      const div = document.createElement("div");
+      if (i < revealedCount) {
+        const pts = getCurrentRoundPoints(room, i + 1);
+        div.className = "clue-item";
+        div.innerHTML = `
+          <div class="clue-tag"><span>CLUE 0${i + 1}</span><span>+${pts} PTS</span></div>
+          <div class="clue-body">${currentCard.clues[i]}</div>
+        `;
+      } else {
+        div.className = "clue-item locked";
+        div.textContent = `[ CLUE 0${i + 1} ]`;
+      }
+      stackEl.appendChild(div);
     }
-    stackEl.appendChild(div);
   }
 
   // Bottom Thumb Dock State
@@ -388,7 +395,6 @@ function renderGameState(room) {
     showDock("dock-exhausted");
     document.querySelector(".exhausted-msg").textContent = "Next round starting shortly...";
   } else if (room.isSuddenDeath) {
-    // Both players can type immediately in Sudden Death
     showDock("dock-typing");
     document.getElementById("typingPromptLabel").textContent = "SUDDEN DEATH — FIRST TO SOLVE WINS!";
     if (state.lastBuzzRound !== room.roundIndex) {
@@ -457,7 +463,8 @@ async function handleBuzzIn() {
   const myExhausted = state.role === "p1" ? room.p1Exhausted : room.p2Exhausted;
   if (myExhausted) return;
 
-  const currentCard = room.deck[room.roundIndex];
+  const deckArr = Array.isArray(room.deck) ? room.deck : Object.values(room.deck || {});
+  const currentCard = deckArr[room.roundIndex];
   const titleLen = currentCard.displayTitle.replace(/[^a-zA-Z0-9]/g, "").length;
   const initialDurationMs = Math.min(22000, (10 + titleLen * 0.4) * 1000);
 
@@ -473,10 +480,10 @@ async function handleBuzzIn() {
 function handleTypingInput(e) {
   const room = state.roomData;
   if (!room) return;
-  const currentCard = room.deck[room.roundIndex];
+  const deckArr = Array.isArray(room.deck) ? room.deck : Object.values(room.deck || {});
+  const currentCard = deckArr[room.roundIndex];
   renderHangmanBoxes(e.target.value, currentCard.displayTitle);
 
-  // Add +1s per keystroke up to 22s total cap from buzz start
   if (room.buzzedBy === state.uid && room.buzzDeadline && room.buzzStartTime) {
     const maxDeadline = room.buzzStartTime + 22000;
     const newDeadline = Math.min(maxDeadline, room.buzzDeadline + 1000);
@@ -495,7 +502,8 @@ async function handleSubmitGuess() {
   const guess = input.value.trim();
   if (!guess) return;
 
-  const currentCard = room.deck[room.roundIndex];
+  const deckArr = Array.isArray(room.deck) ? room.deck : Object.values(room.deck || {});
+  const currentCard = deckArr[room.roundIndex];
   const correct = isTitleMatch(guess, currentCard.titles);
 
   if (correct) {
@@ -518,6 +526,7 @@ async function handleSubmitGuess() {
     await update(state.roomRef, {
       [`${state.role}/score`]: newScore,
       buzzedBy: null,
+      roundAdvanceAt: Date.now() + 2600,
       roundResult: {
         winnerName: me.name,
         title: currentCard.displayTitle,
@@ -525,10 +534,7 @@ async function handleSubmitGuess() {
       },
       history: updatedHistory
     });
-
-    scheduleNextRound();
   } else {
-    // Wrong guess
     if (room.isSuddenDeath) {
       input.value = "";
       input.style.borderColor = "#f87171";
@@ -542,7 +548,6 @@ async function handleSubmitGuess() {
     const oppExhausted = state.role === "p1" ? room.p2Exhausted : room.p1Exhausted;
 
     if (oppExhausted) {
-      // Both players missed—reveal answer and move to next round
       const updatedHistory = [
         ...(room.history || []),
         {
@@ -559,6 +564,7 @@ async function handleSubmitGuess() {
         [`${state.role}/score`]: me.score - penalty,
         [exhaustedField]: true,
         buzzedBy: null,
+        roundAdvanceAt: Date.now() + 2600,
         roundResult: {
           winnerName: null,
           title: currentCard.displayTitle,
@@ -566,10 +572,7 @@ async function handleSubmitGuess() {
         },
         history: updatedHistory
       });
-
-      scheduleNextRound();
     } else {
-      // Unlock buzzer for the opponent
       await update(state.roomRef, {
         [`${state.role}/score`]: me.score - penalty,
         [exhaustedField]: true,
@@ -592,45 +595,50 @@ async function handleSabotage() {
   });
 }
 
-// ================= ROUND ADVANCEMENT & TIMERS =================
-function scheduleNextRound() {
-  setTimeout(async () => {
-    const room = state.roomData;
-    if (!room || room.status !== "playing") return;
+// ================= ATOMIC ROUND ADVANCEMENT & TIMERS =================
+async function tryAdvanceRound(expectedRoundIndex) {
+  if (!state.roomRef || state.advancingRoundIndex === expectedRoundIndex) return;
+  state.advancingRoundIndex = expectedRoundIndex;
 
-    // Only p1 advances the round to avoid double increments
-    if (state.role !== "p1") return;
+  await runTransaction(state.roomRef, current => {
+    if (!current || current.status !== "playing") return;
+    if (current.roundIndex !== expectedRoundIndex) return;
+    if (!current.roundResult) return;
 
-    const nextIdx = room.roundIndex + 1;
-    const totalRounds = room.settings.rounds;
+    const deckArr = Array.isArray(current.deck) ? current.deck : Object.values(current.deck || {});
+    const nextIdx = current.roundIndex + 1;
+    const totalRounds = Math.min(current.settings.rounds, deckArr.length);
 
-    if (room.isSuddenDeath || nextIdx >= totalRounds) {
-      // Check for tie after regulation rounds
-      if (!room.isSuddenDeath && room.p1.score === room.p2.score && room.deck[nextIdx]) {
-        await update(state.roomRef, {
-          roundIndex: nextIdx,
-          isSuddenDeath: true,
-          buzzedBy: null,
-          p1Exhausted: false,
-          p2Exhausted: false,
-          roundResult: null,
-          roundStartTime: Date.now()
-        });
+    if (current.isSuddenDeath || nextIdx >= totalRounds) {
+      if (!current.isSuddenDeath && current.p1.score === current.p2.score && deckArr[nextIdx]) {
+        current.roundIndex = nextIdx;
+        current.isSuddenDeath = true;
+        current.buzzedBy = null;
+        current.buzzDeadline = 0;
+        current.p1Exhausted = false;
+        current.p2Exhausted = false;
+        current.roundResult = null;
+        current.roundAdvanceAt = 0;
+        current.roundStartTime = Date.now();
       } else {
-        await update(state.roomRef, { status: "finished" });
+        current.status = "finished";
+        current.roundResult = null;
+        current.roundAdvanceAt = 0;
       }
     } else {
-      await update(state.roomRef, {
-        roundIndex: nextIdx,
-        buzzedBy: null,
-        buzzDeadline: 0,
-        p1Exhausted: false,
-        p2Exhausted: false,
-        roundResult: null,
-        roundStartTime: Date.now()
-      });
+      current.roundIndex = nextIdx;
+      current.buzzedBy = null;
+      current.buzzDeadline = 0;
+      current.p1Exhausted = false;
+      current.p2Exhausted = false;
+      current.roundResult = null;
+      current.roundAdvanceAt = 0;
+      current.roundStartTime = Date.now();
     }
-  }, 2800);
+    return current;
+  }).catch(() => {
+    state.advancingRoundIndex = -1;
+  });
 }
 
 function startUiTicker() {
@@ -641,8 +649,18 @@ function startUiTicker() {
 
     const now = Date.now();
 
-    // Update Clue Countdown
-    if (!room.roundResult && !room.isSuddenDeath) {
+    // Check if round result banner timer has finished -> advance round atomically
+    if (room.roundResult) {
+      document.getElementById("hudClueTimer").textContent = "NEXT ROUND...";
+      const deadline = room.roundAdvanceAt || (room.roundStartTime + 3000);
+      if (now >= deadline) {
+        await tryAdvanceRound(room.roundIndex);
+      }
+      return;
+    }
+
+    // Update Clue Countdown & Check Clue Reveal
+    if (!room.isSuddenDeath) {
       const elapsedSec = (now - room.roundStartTime) / 1000;
       const clueNum = Math.min(4, Math.floor(elapsedSec / 8) + 1);
       if (clueNum < 4) {
@@ -652,9 +670,9 @@ function startUiTicker() {
         const roundTimeLeft = Math.max(0, Math.ceil(40 - elapsedSec));
         document.getElementById("hudClueTimer").textContent = `ROUND ENDS: ${roundTimeLeft}s`;
 
-        // Auto-expire round at 40s if nobody buzzed
         if (roundTimeLeft === 0 && !room.buzzedBy && state.role === "p1") {
-          const currentCard = room.deck[room.roundIndex];
+          const deckArr = Array.isArray(room.deck) ? room.deck : Object.values(room.deck || {});
+          const currentCard = deckArr[room.roundIndex];
           const updatedHistory = [
             ...(room.history || []),
             {
@@ -667,6 +685,7 @@ function startUiTicker() {
             }
           ];
           await update(state.roomRef, {
+            roundAdvanceAt: Date.now() + 2600,
             roundResult: {
               winnerName: null,
               title: currentCard.displayTitle,
@@ -674,11 +693,10 @@ function startUiTicker() {
             },
             history: updatedHistory
           });
-          scheduleNextRound();
         }
       }
       renderGameState(room);
-    } else if (room.isSuddenDeath) {
+    } else {
       document.getElementById("hudClueTimer").textContent = "FIRST CORRECT WINS";
     }
 
@@ -691,23 +709,35 @@ function startUiTicker() {
         document.getElementById("oppCountdownLabel").textContent = `${rem.toFixed(1)}s remaining...`;
       }
 
-      // If active buzzer runs out of time
       if (rem === 0 && room.buzzedBy === state.uid) {
         const exhaustedField = state.role === "p1" ? "p1Exhausted" : "p2Exhausted";
         const oppExhausted = state.role === "p1" ? room.p2Exhausted : room.p1Exhausted;
-        const currentCard = room.deck[room.roundIndex];
+        const deckArr = Array.isArray(room.deck) ? room.deck : Object.values(room.deck || {});
+        const currentCard = deckArr[room.roundIndex];
 
         if (oppExhausted) {
+          const updatedHistory = [
+            ...(room.history || []),
+            {
+              title: currentCard.displayTitle,
+              year: currentCard.year,
+              lang: currentCard.lang.toUpperCase(),
+              winnerUid: null,
+              winnerName: "Time Out",
+              pts: 0
+            }
+          ];
           await update(state.roomRef, {
             [exhaustedField]: true,
             buzzedBy: null,
+            roundAdvanceAt: Date.now() + 2600,
             roundResult: {
               winnerName: null,
               title: currentCard.displayTitle,
               deltaText: "Time ran out!"
-            }
+            },
+            history: updatedHistory
           });
-          scheduleNextRound();
         } else {
           await update(state.roomRef, {
             [exhaustedField]: true,
@@ -763,6 +793,8 @@ function renderSummary(room) {
 
 async function handleRematch() {
   if (!state.roomRef || !state.roomData) return;
+  state.lastClueRenderKey = "";
+  state.advancingRoundIndex = -1;
   const newDeck = await buildMatchDeck(state.format, state.lang, state.roomData.settings.rounds);
 
   await update(state.roomRef, {
@@ -774,6 +806,7 @@ async function handleRematch() {
     deck: newDeck,
     roundIndex: 0,
     roundStartTime: Date.now(),
+    roundAdvanceAt: 0,
     buzzedBy: null,
     buzzDeadline: 0,
     p1Exhausted: false,
